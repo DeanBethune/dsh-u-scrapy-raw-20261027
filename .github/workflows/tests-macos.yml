@@ -1,0 +1,75 @@
+name: macOS
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+    - master
+    - '[0-9]+.[0-9]+'
+  pull_request:
+
+concurrency:
+  group: ${{github.workflow}}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: '3.10'
+            tox-env: py310
+            coverage: false
+          - python-version: '3.11'
+            tox-env: py311
+            coverage: false
+          - python-version: '3.12'
+            tox-env: py312
+            coverage: false
+          - python-version: '3.13'
+            tox-env: py313
+            coverage: false
+          - python-version: '3.14'
+            tox-env: py314
+            coverage: true
+          - python-version: '3.14'
+            tox-env: no-reactor
+            coverage: false
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@0ca8f610542aa7f4acaf39e65cf4eb3c35091883
+      - name: Install mitmproxy
+        run: uv tool install mitmproxy --python-preference system
+      - name: Run tests
+        env:
+          UV_PYTHON_DOWNLOADS: never
+        run: |
+          args=(scrapy tests --doctest-modules -n auto --junitxml=testenv.junit.xml -o junit_family=legacy --durations=10)
+          if [[ '${{ matrix.coverage }}' == 'true' ]]; then
+            args+=(--cov-config=pyproject.toml --cov=scrapy --cov-report= --cov-report=term-missing --cov-report=xml)
+          else
+            args+=(--no-cov)
+          fi
+          uvx --with tox-uv tox -e '${{ matrix.tox-env }}' \
+            -x 'testenv.deps+=parsel==1.11.0' \
+            -x 'testenv.constrain_package_deps=true' \
+            -- "${args[@]}"
+      - name: Upload coverage to Codecov
+        if: ${{ success() && matrix.coverage }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: true
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
+        with:
+          files: ./testenv.junit.xml
+          fail_ci_if_error: true
